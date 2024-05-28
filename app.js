@@ -1,10 +1,11 @@
 const express = require('express');
-const SerialPort = require('serialport');
-const Readline = require('@serialport/parser-readline');
+const { SerialPort } = require('serialport');
+const { Readline } = require('@serialport/parser-readline');
 const bindings = require('@serialport/bindings');
 
 const app = express();
-const port = 3000;
+const port = 3500;
+let portPath = "COM3";
 
 app.use(express.json());
 
@@ -16,76 +17,78 @@ app.set('json spaces', 2);
  * @returns {{status: string, data: array|object}} - 'ok' or 'fail' with details to handle elsewhere.
  */
 const listPorts = async () => {
-    let result;
-    try {
-        const portList = await bindings.list();
-        result = { status: "ok", data: portList };
-    } catch (err) {
-        result = { status: "fail", data: err };
-    }
-    return result;
+  let result;
+  try {
+    const portList = await bindings.list();
+    result = { status: "ok", data: portList };
+  } catch (err) {
+    result = { status: "fail", data: err };
+  }
+  return result;
 };
 
-// Endpoint to list all serial ports
-app.get('/list-ports', async (req, res) => {
-    const result = await listPorts();
-    res.json(result);
-});
+// Function to send JSON commands to WLED
+function sendJsonCommand(portPath, jsonData) {
+  const port = new SerialPort({
+    path: portPath,
+    baudRate: 115200
+  });
 
-// Function to send color commands to WLED
-function sendColorCommand(portPath, color, colorName) {
-    const port = new SerialPort(portPath, {
-        baudRate: 115200
+  console.log("Sending JSON command to port:", portPath);
+
+  port.on('open', () => {
+    console.log('Serial Port Opened');
+    const jsonString = JSON.stringify(jsonData);
+
+    port.write(jsonString + '\n', (err) => {
+      if (err) {
+        return console.log('Error on write: ', err.message);
+      }
+      console.log('Sent JSON:', jsonString);
+      port.close()
     });
 
-    const parser = port.pipe(new Readline({ delimiter: '\r\n' }));
-
-    port.on('open', () => {
-        console.log('Serial Port Opened');
-        const jsonData = {
-            "seg": [{
-                "col": [[color.r, color.g, color.b]]
-            }]
-        };
-        const jsonString = JSON.stringify(jsonData);
-
-        port.write(jsonString + '\n', (err) => {
-            if (err) {
-                return console.log('Error on write: ', err.message);
-            }
-            console.log(`Changed color to ${colorName}:`, jsonString);
-
-            // Wait for 3 seconds before sending the next command
-            if (colorName === 'Red') {
-                setTimeout(() => {
-                    sendColorCommand(portPath, { r: 0, g: 0, b: 255 }, 'Blue');
-                }, 3000);
-            }
-        });
+    port.on('data', (data) => {
+      console.log('Data:', data.toString());
     });
+  });
 
-    port.on('error', (err) => {
-        console.error('Error: ', err.message);
-    });
-
-    parser.on('data', (data) => {
-        console.log('Received data:', data);
-    });
+  port.on('error', (err) => {
+    console.error('Error: ', err.message);
+  });
 }
 
-// Endpoint to send color commands
-app.post('/send-color', (req, res) => {
-    const { portPath, color } = req.body;
+// Endpoint to send JSON commands
+app.post('/send-json', (req, res) => {
+  const jsonData = req.body;
 
-    if (!portPath || !color) {
-        return res.status(400).json({ status: 'fail', data: 'Missing portPath or color' });
-    }
+  if (!jsonData) {
+    return res.status(400).json({ status: 'fail', data: 'Missing portPath or jsonData' });
+  }
 
-    sendColorCommand(portPath, color, 'Red');
-    res.json({ status: 'ok', data: 'Color command sent' });
+  sendJsonCommand(portPath, jsonData);
+  res.json({ status: 'ok', data: 'JSON command sent' });
 });
 
-// Start the server
-app.listen(port, () => {
+// Check command line arguments
+const args = process.argv.slice(2);
+
+if (args[0] === '--list') {
+  listPorts().then(result => {
+    console.table(result.data);
+  }).catch(err => {
+    console.error('Error listing ports:', err);
+  });
+} else if (args[0] === '--port' && args[1]) {
+  portPath = args[1];
+
+  // Start the server
+  app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);
-});
+    console.log(`Using COM port: ${portPath}`);
+  });
+} else {
+  console.log('Usage:');
+  console.log('  node app.js --list          List all available serial ports');
+  console.log('  node app.js --port <port>   Specify the serial port to use and start the server');
+}
