@@ -58,6 +58,112 @@ function sendJsonCommand(portPath, jsonData) {
   });
 }
 
+const colorMap = {
+  red: [255, 0, 0],
+  green: [0, 255, 0],
+  blue: [0, 0, 255],
+  yellow: [255, 255, 0],
+  cyan: [0, 255, 255],
+  magenta: [255, 0, 255],
+  white: [255, 255, 255],
+  black: [0, 0, 0]
+};
+
+
+app.get('/color/:colorname', (req, res) => {
+  let { colorname } = req.params;
+  let { duration } = req.query;
+
+  applyColor(res, {color: colorname, duration: duration});
+});
+
+app.get('/color', (req, res) => {
+  let { r, g, b, duration, color } = req.query;
+
+  applyColor(res, {color, r, g, b, duration});
+});
+
+function applyColor(res, {color = undefined, r = undefined, g = undefined, b = undefined, duration = undefined}) {
+  // Check if a color name is provided and map it to RGB values
+  if (color && colorMap[color.toLowerCase()]) {
+    [r, g, b] = colorMap[color.toLowerCase()];
+  } else if (!r || !g || !b) {
+    return res.status(400).json({ status: 'fail', data: 'Missing color parameters' });
+  }
+
+  const colorData = {
+    "on": true,
+    "seg": [{
+      "col": [[parseInt(r), parseInt(g), parseInt(b)], [0, 0, 0], [0, 0, 0]]
+    }],
+    tt: 250
+  };
+
+  // Send the color command to the WLED device
+  sendJsonCommand(portPath, colorData);
+
+  if (duration) {
+    // Set a timeout to turn off the color after the specified duration
+    setTimeout(() => {
+      const defaultPreset = 1; // Assuming 1 is the default preset
+      const revertData = {
+        on: true,
+        ps: defaultPreset,
+        tt: 500
+      };
+      sendJsonCommand(portPath, revertData);
+    }, (parseFloat(duration) * 1000 + 250)); // Convert duration from seconds to milliseconds
+  }
+
+  res.json({ status: 'ok', data: `Color set to RGB(${r}, ${g}, ${b}) for ${duration ? duration + ' seconds' : 'indefinitely'}` });
+}
+
+// Endpoint to set the current preset number with /preset/<presetNumber>
+// Data sent:
+// {
+//  "on": true,
+//  "ps": 5
+// }
+app.get('/preset/:number', async (req, res) => {
+  const presetNumber = req.params.number;
+  const duration = req.query.duration; // Retrieve the duration from query parameters
+
+  if (!presetNumber) {
+    return res.status(400).json({ status: 'fail', data: 'Missing preset number' });
+  }
+
+  const jsonData = {
+    on: true,
+    ps: presetNumber,
+    tt: 250
+  };
+
+  // Send command to set the preset
+  sendJsonCommand(portPath, jsonData);
+
+  if (duration) {
+    // Convert duration to milliseconds (assuming duration is in seconds)
+    const durationMs = duration * 1000 + 250;
+
+    // await duration
+    await new Promise(resolve => setTimeout(resolve, durationMs));
+
+    const defaultPreset = 1; // Assuming 1 is the default preset
+    const revertData = {
+      on: true,
+      ps: defaultPreset,
+      tt: 500
+    };
+    sendJsonCommand(portPath, revertData);
+  }
+
+  res.json({ status: 'ok', data: `Preset ${presetNumber} set for ${duration ? duration + ' seconds' : 'indefinitely'}` });
+});
+
+
+
+
+
 // Endpoint to send JSON commands
 app.post('/send-json', (req, res) => {
   const jsonData = req.body;
